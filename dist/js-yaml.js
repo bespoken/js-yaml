@@ -1,4 +1,5 @@
-/* js-yaml 3.11.0 https://github.com/nodeca/js-yaml */(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.jsyaml = f()}})(function(){var define,module,exports;return (function(){function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s}return e})()({1:[function(require,module,exports){
+-n /* js-yaml-bespoken 3.11.3 https://github.com/nodeca/js-yaml-bespoken */
+(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.jsyaml = f()}})(function(){var define,module,exports;return (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
 'use strict';
 
 
@@ -337,6 +338,12 @@ function isPlainSafeFirst(c) {
     && c !== CHAR_GRAVE_ACCENT;
 }
 
+// Determines whether block indentation indicator is required.
+function needIndentIndicator(string) {
+  var leadingSpaceRe = /^\n* /;
+  return leadingSpaceRe.test(string);
+}
+
 var STYLE_PLAIN   = 1,
     STYLE_SINGLE  = 2,
     STYLE_LITERAL = 3,
@@ -404,7 +411,7 @@ function chooseScalarStyle(string, singleLineOnly, indentPerLevel, lineWidth, te
       ? STYLE_PLAIN : STYLE_SINGLE;
   }
   // Edge case: block indentation indicator can only have one digit.
-  if (string[0] === ' ' && indentPerLevel > 9) {
+  if (indentPerLevel > 9 && needIndentIndicator(string)) {
     return STYLE_DOUBLE;
   }
   // At this point we know block styles are valid.
@@ -468,7 +475,7 @@ function writeScalar(state, string, level, iskey) {
 
 // Pre-conditions: string is valid for a block scalar, 1 <= indentPerLevel <= 9.
 function blockHeader(string, indentPerLevel) {
-  var indentIndicator = (string[0] === ' ') ? String(indentPerLevel) : '';
+  var indentIndicator = needIndentIndicator(string) ? String(indentPerLevel) : '';
 
   // note the special case: the string '\n' counts as a "trailing" empty line.
   var clip =          string[string.length - 1] === '\n';
@@ -1095,6 +1102,29 @@ for (var i = 0; i < 256; i++) {
   simpleEscapeMap[i] = simpleEscapeSequence(i);
 }
 
+function addMetaInformation(state, line) {
+  if (!state.result || state.result._yaml) {
+    return;
+  }
+
+  if (typeof state.result === 'string') {
+    if (state.result === 'null') {
+      return;
+    }
+    state.result = String(state.result);
+  } else if (typeof state.result === 'number') {
+    state.result = Number(state.result);
+  }
+
+  if (!line) {
+    line = state.line;
+  }
+
+  state.result._yaml = {
+    line: line,
+    position: state.lineStart
+  };
+}
 
 function State(input, options) {
   this.input = input;
@@ -1329,6 +1359,10 @@ function skipSeparationSpace(state, allowComments, checkIndent) {
         state.lineIndent++;
         ch = state.input.charCodeAt(++state.position);
       }
+
+      if (ch === 0x09 /* Tab */) {
+        throwError(state, 'A YAML file cannot contain tabs as indentation');
+      }
     } else {
       break;
     }
@@ -1475,6 +1509,7 @@ function readPlainScalar(state, nodeIndent, withinFlowCollection) {
   captureSegment(state, captureStart, captureEnd, false);
 
   if (state.result) {
+    addMetaInformation(state);
     return true;
   }
 
@@ -1551,6 +1586,8 @@ function readDoubleQuotedScalar(state, nodeIndent) {
     if (ch === 0x22/* " */) {
       captureSegment(state, captureStart, state.position, true);
       state.position++;
+
+      addMetaInformation(state);
       return true;
 
     } else if (ch === 0x5C/* \ */) {
@@ -1782,6 +1819,10 @@ function readBlockScalar(state, nodeIndent) {
            (ch === 0x20/* Space */)) {
       state.lineIndent++;
       ch = state.input.charCodeAt(++state.position);
+    }
+
+    if (ch === 0x09 /* Tab */) {
+      throwError(state, 'tabs indentation in block scalars is not allowed');
     }
 
     if (!detectedIndent && state.lineIndent > textIndent) {
@@ -2032,6 +2073,7 @@ function readBlockMapping(state, nodeIndent, flowIndent) {
         if (atExplicitKey) {
           keyNode = state.result;
         } else {
+          addMetaInformation(state, _line);
           valueNode = state.result;
         }
       }
